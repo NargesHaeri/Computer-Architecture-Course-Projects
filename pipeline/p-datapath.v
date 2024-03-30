@@ -1,0 +1,319 @@
+`timescale 1ns/1ns
+module ALU(input [31:0] scrA,srcB,input [2:0] Aluop,output Zero,blt,bge,output reg [31:0] ALUResult);
+
+  assign Zero = ~(|ALUResult);
+  assign blt =(ALUResult[31]==1)?1'b1:1'b0;
+  assign bge =(ALUResult[31]==0)?1'b1:1'b0;
+
+  always @(Aluop, scrA,srcB)begin
+    case(Aluop)
+        3'b000 : ALUResult = scrA + srcB;
+        3'b001 : ALUResult = scrA-srcB;
+        3'b010 : ALUResult = scrA&srcB;
+        3'b011 : ALUResult = scrA|srcB;
+        3'b101 : ALUResult = (scrA<srcB) ? 32'd1 : 32'd0;
+	3'b100 : ALUResult = srcB;
+        3'b111 : ALUResult=scrA^srcB; 
+    endcase
+  end
+endmodule
+
+module Extend (input [24:0] in,input [2:0]ImmSrc, output reg [31:0] out);
+    always@(in,ImmSrc)begin
+        case(ImmSrc)
+            3'b000: out = {{20{in[24]}},in[24:13]};
+            3'b001: out = {{20{in[24]}},in[24:18],in[4:0]};
+            3'b010: out = {{19{in[24]}},in[24],in[0],in[23:18], in[4:1], 1'b0};
+            3'b011: out = {in[24:5],12'b0};
+            3'b100: out = {{11{in[24]}},in[24],in[12:5],in[13],in[23:18], in[17:14],1'b0};
+        endcase
+    end
+endmodule
+
+
+module mux2to1 (input [31:0] A, B,input sel,output [31:0] out);
+
+  assign out = ~sel? A:B;
+
+endmodule
+
+module mux3to1 (input [31:0] A, B, C,input [1:0] sel,output reg [31:0] out);
+
+always @(A, B, C, sel)begin
+    case(sel)
+      2'b00: out = A;
+      2'b01: out = B;
+      2'b10: out = C;
+      default : out= 32'b0;
+    endcase
+  end
+endmodule
+
+module mux4to1 (input [31:0] A, B, C,D,input [1:0] sel,output [31:0] out);
+
+  assign out = (sel == 2'b00) ? A :
+               (sel == 2'b01) ? B :
+               (sel == 2'b10) ? C :
+               (sel == 2'b11) ? D :
+               32'bx;
+
+endmodule
+
+module DataMemory(input clk,WE,input [31:0] Address,WD, output [31:0] ReadData);
+  reg [31:0] memory [0:16384];
+  always @(negedge clk)begin
+    if(WE)
+      memory[Address] <=WD;
+  end
+
+ initial begin
+    $readmemh("array.txt",memory);
+  end
+
+  assign ReadData = memory[Address];
+endmodule
+
+module RegisterFile (input clk,input [4:0] A1, A2, A3,input WE,input [31:0] write_data,output [31:0] RD1, RD2);
+
+  reg [31:0] registers [0:31];
+    integer i;
+    initial begin
+        for(i=0;i<32;i=i+1)begin
+		registers[i]<=0;
+    end
+end
+
+always @ (negedge clk) begin
+    if (WE && A3 != 5'd0)
+        registers[A3] <= write_data;
+    end
+    
+    assign RD1 = registers[A1];
+    assign RD2 = registers[A2];
+    
+endmodule
+
+
+module Adder(input [31:0] A, B,output [31:0] sum);
+  assign sum = A + B;
+endmodule
+
+module InstructionMemory(input [31:0] Address,output [31:0] instruction);
+
+  reg [31:0] memory [0:16384];
+  initial begin
+    $readmemh("instructions.txt",memory);
+  end
+
+ assign instruction = memory[Address];
+endmodule
+
+module PC(input clk, rst,En,input [31:0] pc, output reg [31:0] pc_out);
+
+  always @(posedge clk)begin
+    if(rst)
+      pc_out<= 32'd0;
+    else if(~En)begin
+      pc_out<= pc;
+    end
+    else
+        pc_out<=pc_out;
+  end
+endmodule
+
+module IF_ID_reg(input clk,En, clr,input[31:0]PCF,RD,PCPlus4F,output reg [31:0] InstD,PCD,PCPlus4D);
+
+  always@(posedge clk) begin
+    if(clr) begin
+        InstD <= 32'b0;
+        PCD<= 32'b0;
+        PCPlus4D<=32'b0;
+    end
+    else if(~En)begin
+        InstD <= RD;
+        PCD <= PCF;
+        PCPlus4D <= PCPlus4F;
+      end
+    end
+  
+endmodule
+
+module ID_EX_reg(input clk,clr,input [31:0]PCD,RD1,RD2,ExTimmD,PCPlus4D,
+                input [4:0]Rs1D,Rs2D,RdD,
+                input RegWriteD,MemWriteD,AluSrcD,
+                input [2:0] AluControlD,BranchD,
+                input [1:0] ResultSrcD,JumpD,
+                output reg RegWriteE,MemWriteE,AluSrcE,
+                output reg [2:0] AluControlE,BranchE,
+                output reg [1:0] ResultSrcE,JumpE,
+                output reg [31:0] PCE,RD1E,RD2E,ExTimmE,PCPlus4E,output reg [4:0]Rs1E,Rs2E,RdE);
+ 
+  always@(posedge clk) begin
+    if(clr)begin
+        PCE<=32'b0;
+        RD1E<=32'b0;
+        RD2E<=32'b0;
+        Rs1E<=5'b0;
+        Rs2E<=5'b0;
+        RdE<=5'b0;
+        ExTimmE<=32'b0;
+        PCPlus4E<=32'b0; 
+        AluControlE<=3'b0;
+        ResultSrcE<=2'b0;
+        RegWriteE<=1'b0;
+        MemWriteE<=1'b0;
+        JumpE<=2'b0;
+        BranchE<=3'b0;
+        AluSrcE<=1'b0;
+
+    end
+    else begin
+        PCE<=PCD;
+        RD1E<=RD1;
+        RD2E<=RD2;
+        Rs1E<=Rs1D;
+        Rs2E<=Rs2D;
+        RdE<=RdD;
+        ExTimmE<=ExTimmD;
+        PCPlus4E<=PCPlus4D;
+	AluControlE<=AluControlD;
+        ResultSrcE<= ResultSrcD;
+        RegWriteE<=RegWriteD;
+        MemWriteE<=MemWriteD;
+        JumpE<=JumpD;
+        BranchE<=BranchD;
+        AluSrcE<=AluSrcD;
+    end
+  end
+endmodule
+
+module EX_MEM_reg(input clk,RegWriteE,MemWriteE,input [1:0] ResultSrcE,
+                input [31:0]ALUResIn, WriteDataE, ExTimmE,PCPlus4E, 
+                input [4:0] RDE,
+                output reg [31:0]ALUResM, WriteDataM, ExTimmM,PCPlus4M, 
+                output reg [4:0] RDM,
+                output reg RegWriteM,MemWriteM,output reg [1:0] ResultSrcM);
+
+  
+    always@(posedge clk) begin
+        RegWriteM <= RegWriteE;
+        MemWriteM <= MemWriteE;
+        ResultSrcM <= ResultSrcE;
+        ALUResM <= ALUResIn;
+        WriteDataM <= WriteDataE;
+        ExTimmM<=ExTimmE;
+        PCPlus4M<=PCPlus4E;
+	RDM<=RDE;
+    end
+
+endmodule
+
+module MEM_WB_reg(input clk,RegWriteM,input [1:0] ResultSrcM,
+                input [31:0]ALUResM,ExTimmM,
+                input [4:0] RDM,
+                input [31:0] ReadDataM,PCPlus4M, 
+                output reg [4:0] RDW,
+                output reg [31:0] ALUResW,ReadDataW,PCPlus4W,ExTimmW,
+                output reg RegWriteW,output reg [1:0] ResultSrcW);
+    
+    always@(posedge clk) begin
+        RDW<=RDM;
+        ALUResW<=ALUResM;
+        ReadDataW<=ReadDataM;
+        PCPlus4W<=PCPlus4M;
+        RegWriteW<=RegWriteM;
+        ResultSrcW<=ResultSrcM;
+        ExTimmW<=ExTimmM;
+    end
+
+endmodule
+
+module hazard_unit(input clk,rst,RegWriteW,RegWriteM,input [4:0] Rs1D,Rs2D,Rs1E,Rs2E,RdE,RdM,RdW,input [1:0] PCSrcE,ResultSrcE,
+output reg StallF,StallD,FlushD,FlushE,output reg[1:0] ForwardAE,ForwardBE);
+    reg lw_stall;
+    always @(posedge rst){lw_stall,StallF,StallD,ForwardAE,ForwardBE}=7'b0;
+    always @(Rs1D,Rs2D,Rs1E,Rs2E,RdE,PCSrcE,ResultSrcE,RdM,RegWriteM,RdW,RegWriteW)begin
+        {lw_stall,StallF,StallD,ForwardAE,ForwardBE}=7'b0;
+        if (((Rs1E==RdM)&&RegWriteM)&&(Rs1E!=5'b0))
+            ForwardAE=2'b10;
+        else if (((Rs1E==RdW)&&RegWriteW)&&(Rs1E!=5'b0))
+            ForwardAE=2'b01;
+        else
+            ForwardAE=2'b00;
+        if (((Rs2E==RdM)&&RegWriteM)&&(Rs2E!=5'b0))
+         ForwardBE=2'b10;
+         else if (((Rs2E==RdW)&&RegWriteW)&&(Rs2E!=5'b0))
+            ForwardBE=2'b01;
+        else
+            ForwardBE=2'b00;
+        if (((Rs1D==RdE)||(Rs2D==RdE))&&(ResultSrcE==2'b01))
+            {lw_stall,StallD,StallF}=3'b111;
+    end
+    assign FlushD=|PCSrcE;
+    assign FlushE=(lw_stall || (|PCSrcE));
+endmodule
+  
+module Pcsrc(input [2:0]BranchE,input [2:0]func3,input Zero,blt,bge,input [1:0] JumpE,output reg [1:0] PCSrcE);
+	
+	always @(BranchE,Zero,bge,blt,func3,JumpE) begin
+	if (BranchE==3'b000 && JumpE==2'b00) PCSrcE=2'b00;
+	else if (BranchE==3'b001 && Zero==1'b1) PCSrcE=2'b01;
+	else if (BranchE==3'b010 && Zero==1'b0) PCSrcE=2'b01;
+	else if (BranchE==3'b011 && bge==1'b1) PCSrcE=2'b01;
+	else if (BranchE==3'b100 && blt==1'b1) PCSrcE=2'b01;
+	else if (JumpE==2'b01) PCSrcE=2'b01;
+	else if (JumpE==2'b10) PCSrcE=2'b10;
+	else PCSrcE=2'b00;
+	end 
+	
+endmodule
+
+
+module datapath(clk,rst,RegWriteD,MemWriteD,JumpD,BranchD,AluSrcD,ImmSrcD,ResultSrcD,AluControlD,OPC,func3,func7);
+    input clk,rst;
+    input RegWriteD,MemWriteD,AluSrcD;
+    input [1:0]ResultSrcD,JumpD;
+    input [2:0]AluControlD,ImmSrcD,BranchD;
+    output [6:0] OPC,func7; 
+    output [2:0]func3;
+    wire Zero,blt,bge;
+    wire [31:0] PCPlus4F,PCTargetE,ALUResult,PCF_P,PCF,RD,InstD,PCD,PCPlus4D,ResultW,RD1, RD2;
+    wire RegWriteW,RegWriteE,MemWriteE,AluSrcE,RegWriteM,MemWriteM;
+    wire [1:0]ResultSrcE,ResultSrcM,ResultSrcW,JumpE,ForwardAE,ForwardBE,PCSrcE;
+    wire[31:0] ReadDataM,ExTimmD,PCE,RD1E,RD2E,ExTimmE,PCPlus4E,ALUResM,SrcAE,SrcBE,SrcBE_in,WriteDataE,WriteDataM,ExTimmM,PCPlus4M,ALUResW, ReadDataW,PCPlus4W,ExTimmW;
+    wire [4:0] Rs1D,Rs2D,RdD,Rs1E,Rs2E,RdE,RdM,RdW;
+    wire [2:0] AluControlE,BranchE;
+    wire StallF,StallD,FlushD,FlushE;
+
+    assign OPC = InstD[6:0];
+    assign func3 = InstD[14:12];
+    assign func7 = InstD[31:25];
+
+    mux3to1 mux1(PCPlus4F,PCTargetE,ALUResM,PCSrcE,PCF_P);
+    PC pc(clk, rst,StallF,PCF_P,PCF);
+    InstructionMemory instM({2'b00,PCF[31:2]},RD);
+    Adder adder1(PCF, 32'd4,PCPlus4F);
+    IF_ID_reg if_id_reg(clk,StallD,FlushD,PCF,RD,PCPlus4F,InstD,PCD,PCPlus4D);
+    RegisterFile reg_file (clk,InstD[19:15], InstD[24:20], RdW,RegWriteW,ResultW,RD1, RD2);
+    Extend imm_extend (InstD[31:7],ImmSrcD, ExTimmD);
+    ID_EX_reg id_ex_reg(clk,FlushE,PCD,RD1,RD2,ExTimmD,PCPlus4D,InstD[19:15],InstD[24:20],InstD[11:7],RegWriteD,
+                        MemWriteD,AluSrcD,AluControlD,BranchD,ResultSrcD,JumpD, RegWriteE,
+                        MemWriteE,AluSrcE,AluControlE,BranchE,ResultSrcE,JumpE,PCE,RD1E,
+                        RD2E,ExTimmE,PCPlus4E,Rs1E,Rs2E,RdE);
+    mux3to1 mux2(RD1E,ResultW,ALUResM,ForwardAE,SrcAE);
+    mux3to1 mux3(RD2E,ResultW,ALUResM,ForwardBE,WriteDataE);
+    mux2to1 mux4(WriteDataE,ExTimmE,AluSrcE,SrcBE);
+    Adder adder2(PCE,ExTimmE,PCTargetE);
+    ALU alu(SrcAE,SrcBE,AluControlE,Zero,blt,bge,ALUResult);
+    EX_MEM_reg ex_mem_reg(clk,RegWriteE,MemWriteE,ResultSrcE,ALUResult, WriteDataE, ExTimmE,
+                        PCPlus4E, RdE,ALUResM, WriteDataM,ExTimmM,PCPlus4M, RdM,RegWriteM,
+                        MemWriteM,ResultSrcM);
+    DataMemory datamemory(clk,MemWriteM,{2'b00,ALUResM[31:2]},WriteDataM, ReadDataM);
+    MEM_WB_reg mem_wb_reg(clk,RegWriteM,ResultSrcM,ALUResM,ExTimmM,RdM,ReadDataM,PCPlus4M,
+                           RdW,ALUResW,ReadDataW,PCPlus4W,ExTimmW,RegWriteW,ResultSrcW);
+    mux4to1 mux5(ALUResW,ReadDataW,PCPlus4W,ExTimmW,ResultSrcW,ResultW);
+    hazard_unit hu(clk,rst,RegWriteW,RegWriteM,InstD[19:15],InstD[24:20],Rs1E,Rs2E,RdE,RdM,RdW,PCSrcE,ResultSrcE,
+		   StallF,StallD,FlushD,FlushE,ForwardAE,ForwardBE);
+    Pcsrc pcsrc(BranchE,func3,Zero,blt,bge,JumpE,PCSrcE);
+    
+endmodule
